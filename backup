@@ -1,0 +1,164 @@
+#!/opt/bin/sh
+PATH=/opt/bin:/opt/sbin:/sbin:/bin:/usr/sbin:/usr/bin
+
+### Configuration
+# USB Drive volume label
+LABEL=Backups
+
+# What to store (1|0)
+# KVAS. Always save a separate copy of app and config folders
+IsKVAS=0
+# NFQWS. Always save a separate copy of config folders
+IsNFQWS=0
+# Entware. Always save an archive
+IsEnt=1
+# Router running congig. Save a copy if there were changes
+IsConf=1
+# Firmware. Save a copy if firmware changed
+IsFirm=1
+
+# Keep backups for 8 days
+DAYS=8
+
+
+# Syslog tag
+TAG=Backup
+
+# Folder to store. "Backups" is volume label of USB Flash drive attached to router.
+BACKUPSTORE=/tmp/mnt/${LABEL}/backup/
+
+# Entware backup filename prefix
+BACKUPNAME=entware
+
+# Entware backup: what to save
+BACKUPTHIS=/opt/
+
+# Entware backup: what to skip
+EXCLUDE="
+tmp
+var/log
+"
+
+# Exclude this strings when detect configuration change
+EXCLCONFCMD='! \$\$\$\|clock date'
+
+# Firmware backup path. "Backups" is a volume label of USB Flash drive
+BACFIRMWARE=${LABEL}:/backup/
+
+# Output messages to Syslog and to screen
+EchoLog() {
+    local message="$1"
+    logger -t $TAG "$message"
+    echo "$TAG: $message"
+}
+
+# Check destination availability
+if [ ! -d "$BACKUPSTORE" ]; then
+    EchoLog "Error: Backup destination $BACKUPSTORE is not mounted or accessible. Exiting."
+    exit 1
+fi
+
+DATE=`date +%Y-%m-%d`
+
+# Create folder at destination
+DATEDIR=${BACKUPSTORE}${DATE}/
+mkdir -p $DATEDIR
+
+EchoLog "Starting backup process"
+cd $BACKUPTHIS
+
+# Backup KVAS
+if [ "$IsKVAS" = "1" ]
+    then
+        EchoLog "Starting KVAS backup"
+        cp -rf /opt/apps/kvas ${DATEDIR}
+    else
+        EchoLog "Skiping KVAS backup"
+fi
+
+# Backup NFQWS configuration
+if [ "$IsNFQWS" = "1" ]
+    then
+        EchoLog "Starting NFQWS backup"
+        cp -rf /opt/etc/nfqws ${DATEDIR}
+    else
+        EchoLog "Skiping NFQWS backup"
+fi
+
+# Backup Entware to .tgz
+if [ "$IsEnt" = "1" ]
+    then
+	EchoLog "Starting Entware backup"
+	echo "$EXCLUDE" | tar -X - -cf - * | gzip > ${DATEDIR}${BACKUPNAME}-${DATE}.tgz
+    else
+	EchoLog "Skiping Entware backup"
+fi
+
+# Backup router running configuration
+if [ "$IsConf" = "1" ]
+    then
+	EchoLog "Starting running configuration backup"
+	ndmq -p "show running-config" -P message > ${DATEDIR}config-${DATE}
+	if [ -f "${BACKUPSTORE}config-cur" ]
+	    then
+		OLDCONF=`grep -v "${EXCLCONFCMD}" ${BACKUPSTORE}config-cur`
+		CURCONF=`grep -v "${EXCLCONFCMD}" ${DATEDIR}config-${DATE}`
+		if [ "$OLDCONF" != "$CURCONF" ]
+		    then
+			EchoLog "Router running configuration is changed. Creating a new copy."
+			cp -f ${DATEDIR}config-${DATE} ${BACKUPSTORE}config-cur-new
+			mv -f ${BACKUPSTORE}config-cur ${DATEDIR}config-${DATE}
+			gzip -f ${DATEDIR}config-${DATE}
+			mv ${BACKUPSTORE}config-cur-new ${BACKUPSTORE}config-cur
+		    else
+			EchoLog "Router running configuration is not changed. Renew current copy."
+			mv -f ${DATEDIR}config-${DATE} ${BACKUPSTORE}config-cur
+		fi
+	    else
+		EchoLog "Current running configuration copy is not found. Is it first run? Do config copy."
+		cp ${DATEDIR}config-${DATE} ${BACKUPSTORE}config-cur
+		gzip -f ${DATEDIR}config-${DATE}
+	fi
+    else
+	EchoLog "Skiping running configuration backup"
+fi
+
+# Backup firmware
+if [ "$IsFirm" = "1" ]
+    then
+	EchoLog "Starting firmware backup"
+	ndmq -p "copy flash:/firmware ${BACFIRMWARE}${DATE}/firmware-${DATE}" -P message
+	if [ -f "${BACKUPSTORE}firmware-cur" ]
+	    then
+		CMPFIRM=`cmp ${BACKUPSTORE}firmware-cur ${DATEDIR}firmware-${DATE}`
+		if [ -n "$CMPFIRM" ]
+		    then
+			EchoLog "Firmware is changed. Do new copy."
+			cp -f ${DATEDIR}firmware-${DATE} ${BACKUPSTORE}firmware-cur-new
+			mv -f ${BACKUPSTORE}firmware-cur ${DATEDIR}firmware-${DATE}
+			mv ${BACKUPSTORE}firmware-cur-new ${BACKUPSTORE}firmware-cur
+		    else
+			EchoLog "Firmware is not changed. Renew current firmware copy."
+			mv -f ${DATEDIR}firmware-${DATE} ${BACKUPSTORE}firmware-cur
+		fi
+	    else
+		EchoLog "Current firmware copy not found. Is it first run? Do firmware copy."
+		cp ${DATEDIR}firmware-${DATE} ${BACKUPSTORE}firmware-cur
+	fi
+    else
+	EchoLog "Skiping firmware backup"
+fi
+
+EchoLog "Backups are finished."
+cd $BACKUPSTORE
+
+# Listing files before and after obsolete removal
+EchoLog "Files before removing obsolete archives
+`ls -lR`"
+EchoLog "Remove obsolete archives"
+find $BACKUPSTORE -type d -mtime +${DAYS} -exec rm -rf {} \;
+EchoLog "Files after removing obsolete archives
+`ls -lR`"
+
+EchoLog "Exiting"
+
