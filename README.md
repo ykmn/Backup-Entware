@@ -13,9 +13,11 @@ Daily backups are stored in `YYYY-MM-DD` subfolders.
 
 Set 1 or 0 in the Configuration section variables to backup or skip:
 
-* isKVAS=1: backup [KVAS](https://github.com/qzeleza/kvas) binaries and configuration from /opt/apps/kvas
+* isNFQWS1=1: backup [nfqws-keenetic](https://github.com/Anonym-tsk/nfqws-keenetic) configuration from /opt/etc/nfqws
 
-* isNFQWS=1: backup [nfqws-keenetic](https://github.com/Anonym-tsk/nfqws-keenetic) configuration from /opt/etc/nfqws
+* isNFQWS2=1: backup [nfqws2-keenetic](https://github.com/nfqws/nfqws2-keenetic) configuration from /opt/etc/nfqws2
+
+* isSKeen=1: backup [SKeen](https://github.com/jinndi/SKeen/) configuration from /opt/etc/skeen
 
 * IsEnt=1: backup Entware file system to Entware-YYYY-MM-DD.tgz file. You can use it to fully restore your Entware on a new USB Flash drive, just put this file to /install folder.
 
@@ -25,10 +27,10 @@ Set 1 or 0 in the Configuration section variables to backup or skip:
 
 ## Installation
 
-Install cron:
+Install `pv` and `cron`:
 ```bash
 opkg update
-opkg install cron
+opkg install pv cron
 /opt/etc/init.d/S10cron status
 ```
 
@@ -48,10 +50,8 @@ Plug in USB Drive and check its availability:
 ```bash
 ls -la /tmp/mnt
 ```
-If the `Backups` subfolder is mounted, you are good to go. Create the `/backup` folder if you haven't already:
-```bash
-mkdir /tmp/mnt/Backups/backup
-```
+If the USB-drive subfolder is mounted, you are good to go. Notice the volume label and
+set it into `LABEL=` variable.
 
 Run script manually:
 ```bash

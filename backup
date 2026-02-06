@@ -1,180 +1,190 @@
-#!/opt/bin/sh
+7#!/opt/bin/sh
+set -e  # Exit on error
+
 PATH=/opt/bin:/opt/sbin:/sbin:/bin:/usr/sbin:/usr/bin
 
 ### Configuration
-# USB Drive volume label
-LABEL=Backups
+LABEL=Kingston16G
+FOLDER=backup
 
-# What to store (1|0)
-# KVAS. Always save a separate copy of app and config folders
-IsKVAS=1
-# NFQWS. Always save a separate copy of config folders
-IsNFQWS=1
-# Entware. Always save an archive
+IsNFQWS1=0
+IsNFQWS2=1
+IsSKeen=1
 IsEnt=1
-# Router running congig. Save a copy if there were changes
 IsConf=1
-# Firmware. Save a copy if firmware changed
 IsFirm=1
 
-# Keep backups for 8 days
 DAYS=8
-
-
-# Syslog tag
 TAG=Backup
-
-# Folder to store. "Backups" is volume label of USB Flash drive attached to router.
-BACKUPSTORE=/tmp/mnt/${LABEL}/backup/
-
-# Entware backup filename prefix
+BACKUPSTORE=/tmp/mnt/${LABEL}/${FOLDER}/
 BACKUPNAME=entware
-
-# Entware backup: what to save
 BACKUPTHIS=/opt/
-
-# Entware backup: what to skip
-EXCLUDE="
-tmp
-var/log
-"
-
-# Exclude this strings when detect configuration change
+EXCLUDE="tmp
+var/log"
 EXCLCONFCMD='! \$\$\$\|clock date'
+BACFIRMWARE=${LABEL}:/${FOLDER}/
 
-# Firmware backup path. "Backups" is a volume label of USB Flash drive
-BACFIRMWARE=${LABEL}:/backup/
 
-# Output messages to Syslog and to screen
+
+# Colors
+
+if [ -t 1 ]; then  # only to terminal (not in cron)
+	RESET='\033[0m'
+	CYAN='\033[36m'
+	GREEN='\033[32m'
+	YELLOW='\033[33m'
+	RED='\033[31m'
+	BOLD_RED='\033[1;31m'
+	BOLD_YELLOW='\033[1;33m'
+	GRAY='\033[90m'
+else
+    # not in terminal
+    RESET=''
+	CYAN=''
+	GREEN=''
+	YELLOW=''
+	RED=''
+	BOLD_RED=''
+	BOLD_YELLOW=''
+	GRAY=''
+fi
+
 EchoLog() {
     local message="$1"
-    logger -t $TAG "$message"
-    echo "$TAG: $message"
+    local color="$RESET"
+
+    case "$message" in
+        *"Starting"*)                    color="$CYAN" ;;
+        *"complete"|"Done"|"finished"*)  color="$GREEN" ;;
+        *"Skipping"*)          	         color="$GRAY" ;;
+        *"Warning"*)                     color="$YELLOW" ;;
+        *"Error"*)                       color="$BOLD_RED" ;;
+        *"changed"*)                     color="$BOLD_YELLOW" ;;
+        *"is not changed"*)              color="$GRAY" ;;
+    esac
+
+    logger -t "$TAG" "$message"
+    echo -e "${color}${TAG}: ${message}${RESET}"
 }
 
-# Check destination availability
+# Check storage availability
 if [ ! -d "$BACKUPSTORE" ]; then
-    EchoLog "Error: Backup destination $BACKUPSTORE is not mounted or accessible. Exiting."
-    exit 1
+    mkdir -p "$BACKUPSTORE" || { EchoLog "Error: Cannot create $BACKUPSTORE."; exit 1; }
+    [ ! -d "$BACKUPSTORE" ] && { EchoLog "Error: Backup destination $BACKUPSTORE is not mounted or accessible. Exiting."; exit 1; }
 fi
 
-DATE=`date +%Y-%m-%d`
-
-# Create folder at destination
-DATEDIR=${BACKUPSTORE}${DATE}/
-mkdir -p $DATEDIR
+DATE=$(date +%Y-%m-%d)
+DATEDIR="${BACKUPSTORE}${DATE}/"
+mkdir -p "$DATEDIR" || { EchoLog "Error: Cannot create $DATEDIR."; exit 1; }
 
 EchoLog "Starting backup process"
-cd $BACKUPTHIS
+cd "$BACKUPTHIS"
 
-# Backup KVAS
-if [ "$IsKVAS" = "1" ]
-then
-    EchoLog "Starting KVAS backup"
-    mkdir ${DATEDIR}/opt
-	mkdir ${DATEDIR}/opt/apps
-	cp -rf /opt/apps/kvas ${DATEDIR}/opt/apps
-
-	mkdir ${DATEDIR}/opt/etc
-	cp -rf /opt/etc/xray ${DATEDIR}/opt/etc
-	cp -rf /opt/etc/init.d ${DATEDIR}/opt/etc
-	cp -f /opt/etc/kvas.* ${DATEDIR}/opt/etc
-	cp -f /opt/etc/hosts ${DATEDIR}/opt/etc
-	cp -f /opt/etc/dnscrypt-proxy.toml ${DATEDIR}/opt/etc
-	cp -rf /opt/etc/dnsmasq.d ${DATEDIR}/opt/etc
-	cp -f /opt/etc/dnsmasq.conf ${DATEDIR}/opt/etc
-	cp -f /opt/etc/shadowsocks.json ${DATEDIR}/opt/etc
-	EchoLog "Done."
+# NFQWS1
+if [ "$IsNFQWS1" = "1" ]; then
+    EchoLog "Starting NFQWS1 backup"
+    mkdir -p "${DATEDIR}/opt/etc" || { EchoLog "Error: mkdir failed for NFQWS1."; exit 1; }
+    cp -rf /opt/etc/nfqws "${DATEDIR}/opt/etc" || { EchoLog "Error: NFQWS1 copy failed"; exit 1; }
+    EchoLog "NFQWS1 backup complete"
 else
-    EchoLog "Skiping KVAS backup"
+    EchoLog "Skipping NFQWS1 backup"
 fi
 
-# Backup NFQWS configuration
-if [ "$IsNFQWS" = "1" ]
-then
-	EchoLog "Starting NFQWS backup"
-    if [ ! -d "$DATEDIR/opt/etc" ]; then
-		mkdir ${DATEDIR}/opt
-		mkdir ${DATEDIR}/opt/etc
-	fi
-	cp -rf /opt/etc/nfqws ${DATEDIR}/opt/etc
-	EchoLog "Done."
+# NFQWS2
+if [ "$IsNFQWS2" = "1" ]; then
+    EchoLog "Starting NFQWS2 backup"
+    mkdir -p "${DATEDIR}/opt/etc" || { EchoLog "Error: mkdir failed for NFQWS2."; exit 1; }
+    cp -rf /opt/etc/nfqws2 "${DATEDIR}/opt/etc" || { EchoLog "Error: NFQWS2 copy failed"; exit 1; }
+    EchoLog "NFQWS2 backup complete"
 else
-    EchoLog "Skiping NFQWS backup"
+    EchoLog "Skipping NFQWS2 backup"
 fi
 
-# Backup Entware to .tgz
-if [ "$IsEnt" = "1" ]
-then
-	EchoLog "Starting Entware backup"
-	echo "$EXCLUDE" | tar -X - -cf - * | gzip > ${DATEDIR}${BACKUPNAME}-${DATE}.tgz
-	EchoLog "Done."
+# SKeen
+if [ "$IsSKeen" = "1" ]; then
+    EchoLog "Starting SKeen backup"
+    mkdir -p "${DATEDIR}/opt/etc/skeen" || { EchoLog "Error: mkdir failed for SKeen."; exit 1; }
+    cp -f /opt/etc/skeen/skeen.json "${DATEDIR}/opt/etc/skeen" || { EchoLog "Error: skeen.json copy failed"; exit 1; }
+    cp -rf /opt/etc/skeen/config "${DATEDIR}/opt/etc/skeen" || { EchoLog "Error: skeen config copy failed"; exit 1; }
+    EchoLog "SKeen backup complete"
 else
-	EchoLog "Skiping Entware backup"
+    EchoLog "Skipping SKeen backup"
 fi
 
-# Backup router running configuration
-if [ "$IsConf" = "1" ]
-then
-	EchoLog "Starting running configuration backup"
-	ndmq -p "show running-config" -P message > ${DATEDIR}config-${DATE}
-	if [ -f "${BACKUPSTORE}config-cur" ]
-	then
-		OLDCONF=`grep -v "${EXCLCONFCMD}" ${BACKUPSTORE}config-cur`
-		CURCONF=`grep -v "${EXCLCONFCMD}" ${DATEDIR}config-${DATE}`
-		if [ "$OLDCONF" != "$CURCONF" ]
-		then
-			EchoLog "Router running configuration is changed. Creating a new copy."
-			cp -f ${DATEDIR}config-${DATE} ${BACKUPSTORE}config-cur-new
-			mv -f ${BACKUPSTORE}config-cur ${DATEDIR}config-${DATE}
-			gzip -f ${DATEDIR}config-${DATE}
-			mv ${BACKUPSTORE}config-cur-new ${BACKUPSTORE}config-cur
-			EchoLog "Done."
-		else
-			EchoLog "Router running configuration is not changed. Renew current copy."
-			mv -f ${DATEDIR}config-${DATE} ${BACKUPSTORE}config-cur
-		fi
-	else
-		EchoLog "Current running configuration copy is not found. Is it first run? Do config copy."
-		cp ${DATEDIR}config-${DATE} ${BACKUPSTORE}config-cur
-		gzip -f ${DATEDIR}config-${DATE}
-	fi
-else
-	EchoLog "Skiping running configuration backup"
-fi
-
-# Backup firmware
-if [ "$IsFirm" = "1" ]
-then
-	EchoLog "Starting firmware backup"
-	ndmq -p "copy flash:/firmware ${BACFIRMWARE}${DATE}/firmware-${DATE}" -P message
-	if [ -f "${BACKUPSTORE}firmware-cur" ]
-	then
-		CMPFIRM=`cmp ${BACKUPSTORE}firmware-cur ${DATEDIR}firmware-${DATE}`
-		if [ -n "$CMPFIRM" ]
-		then
-			EchoLog "Firmware is changed. Do new copy."
-			cp -f ${DATEDIR}firmware-${DATE} ${BACKUPSTORE}firmware-cur-new
-			mv -f ${BACKUPSTORE}firmware-cur ${DATEDIR}firmware-${DATE}
-			mv ${BACKUPSTORE}firmware-cur-new ${BACKUPSTORE}firmware-cur
-			EchoLog "Done."
-		else
-			EchoLog "Firmware is not changed. Renew current firmware copy."
-			mv -f ${DATEDIR}firmware-${DATE} ${BACKUPSTORE}firmware-cur
-		fi
+# Entware
+if [ "$IsEnt" = "1" ]; then
+    EchoLog "Starting Entware backup"
+    TOTAL_SIZE=$(du -sb /opt 2>/dev/null | awk '{print $1}')
+    if [ -z "$TOTAL_SIZE" ] || [ "$TOTAL_SIZE" -eq 0 ]; then
+        EchoLog "Warning: du failed → no progress bar"
+        tar -cf - /opt/* --exclude=tmp --exclude=var/log | gzip > "${DATEDIR}${BACKUPNAME}-${DATE}.tgz"
     else
-		EchoLog "Current firmware copy not found. Is it first run? Do firmware copy."
-		cp ${DATEDIR}firmware-${DATE} ${BACKUPSTORE}firmware-cur
-	fi
+        EchoLog "Entware size ≈ $((TOTAL_SIZE / 1024 / 1024)) MiB (approximate)"
+        tar -cf - /opt/* --exclude=tmp --exclude=var/log \
+            | pv -s "$TOTAL_SIZE" -N archiving | gzip | pv -N compressing > "${DATEDIR}${BACKUPNAME}-${DATE}.tgz"
+    fi
+    EchoLog "Entware backup complete"
 else
-	EchoLog "Skiping firmware backup"
+    EchoLog "Skipping Entware backup"
 fi
 
-EchoLog "Backups are finished."
-cd $BACKUPSTORE
+# Running config
+if [ "$IsConf" = "1" ]; then
+    EchoLog "Starting running configuration backup"
+    CONFIG_NEW="${DATEDIR}config-${DATE}"
+    CONFIG_CUR="${BACKUPSTORE}config-cur"
+    ndmc -c "show running-config" > "$CONFIG_NEW" || { EchoLog "Error: ndmc failed for running-config."; exit 1; }
+    if [ -f "$CONFIG_CUR" ]; then
+        OLDCONF=$(grep -v "${EXCLCONFCMD}" "$CONFIG_CUR")
+        CURCONF=$(grep -v "${EXCLCONFCMD}" "$CONFIG_NEW")
+        if [ "$OLDCONF" = "$CURCONF" ]; then
+            EchoLog "Router running configuration is not changed. No new archive needed."
+            rm "$CONFIG_NEW"
+        else
+            EchoLog "Router running configuration is changed. Creating a new archive."
+            cp -f "$CONFIG_NEW" "$CONFIG_CUR" || { EchoLog "Error: current-config copy failed"; exit 1; }
+            gzip -f "$CONFIG_NEW" || { EchoLog "Error: gzip failed for config."; exit 1; }
+            EchoLog "Done."
+        fi
+    else
+        EchoLog "Current running configuration copy not found. Is it first run? Creating archive."
+        cp -f "$CONFIG_NEW" "$CONFIG_CUR" || { EchoLog "Error: cp failed for config-cur."; exit 1; }
+        gzip -f "$CONFIG_NEW" || { EchoLog "Error: gzip failed for config."; exit 1; }
+        EchoLog "Running configuration backup complete"
+    fi
+else
+    EchoLog "Skipping running configuration backup"
+fi
 
-# Listing files before and after obsolete removal
-EchoLog "Remove obsolete archives"
-find $BACKUPSTORE -type d -mtime +${DAYS} -exec rm -rf {} \;
+# Firmware
+if [ "$IsFirm" = "1" ]; then
+    EchoLog "Starting firmware backup"
+    FIRM_NEW="${DATEDIR}firmware-${DATE}"
+    FIRM_CUR="${BACKUPSTORE}firmware-cur"
+    ndmc -c "copy flash:/firmware ${BACFIRMWARE}${DATE}/firmware-${DATE}" || { EchoLog "Error: ndmc copy failed for firmware."; exit 1; }
+    if [ -f "$FIRM_CUR" ]; then
+        CMPFIRM=$(cmp "$FIRM_CUR" "$FIRM_NEW" || true)
+        if [ -z "$CMPFIRM" ]; then
+            EchoLog "Firmware is not changed. No new archive needed."
+            rm "$FIRM_NEW"
+        else
+            EchoLog "Firmware is changed. Creating a new archive."
+            cp -f "$FIRM_NEW" "$FIRM_CUR" || { EchoLog "Error: cp failed for firmware-cur."; exit 1; }
+            EchoLog "Done."
+        fi
+    else
+        EchoLog "Current firmware copy not found. Is it first run? Creating archive."
+        cp -f "$FIRM_NEW" "$FIRM_CUR" || { EchoLog "Error: cp failed for firmware-cur."; exit 1; }
+        EchoLog "Firmware backup complete"
+    fi
+else
+    EchoLog "Skipping firmware backup"
+fi
 
-EchoLog "Exiting"
+EchoLog "Backup process is finished"
+cd "$BACKUPSTORE"
+
+EchoLog "Removing obsolete archives"
+find "$BACKUPSTORE" -type d -mtime +${DAYS} -exec rm -rf {} \;
+
+EchoLog "Exiting backup"
