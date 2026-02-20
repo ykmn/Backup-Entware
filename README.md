@@ -6,9 +6,17 @@
 ![Entware](https://img.shields.io/badge/Entware-0097dc.svg?style=for-the-badge&logo=Entware&logoColor=white)
 
 
-This script allows you to create daily backup of Entware of your Keenetic router. Connect a USB Flash drive formatted in exFAT and labeled as "Backups" to an available USB port. Feel free to change the drive volume label and replace `LABEL=Backups` in the script.
+This script allows you to:
 
-Backups are stored to `/backup` folder on USB Drive, so create it first.
+* complete daily backup of Entware of your Keenetic router
+
+* Keenetic running configuration and firmware
+
+* backup some apps and services' configurations 
+
+Connect a USB Flash drive formatted in exFAT and labeled as "Backups" to an available USB port. Feel free to change the drive volume label and replace `LABEL=Backups` in the script.
+
+Backups are stored to `/backup` folder on root of USB drive. You have to create it first.
 Daily backups are stored in `YYYY-MM-DD` subfolders.
 
 Set 1 or 0 in the Configuration section variables to backup or skip:
@@ -27,7 +35,7 @@ Set 1 or 0 in the Configuration section variables to backup or skip:
 
 ## Installation
 
-Install `pv` and `cron`:
+Prerequisites: install `pv` and `cron`:
 ```bash
 opkg update
 opkg install pv cron
@@ -40,23 +48,25 @@ cd ~
 git clone https://github.com/ykmn/Backup-Entware.git
 ```
 
-Copy `backup` script to the cron daily folder, and set execute permission:
+Copy `backup` script to the cron daily folder, set execute permission:
 ```bash
 cp ~/Backup-Entware/backup /opt/etc/cron.daily
 chmod +x /opt/etc/cron.daily/backup
 ```
 
-Plug in USB Drive and check its availability:
+Plug in USB drive and check its availability:
 ```bash
 ls -la /tmp/mnt
 ```
 If the USB-drive subfolder is mounted, you are good to go. Notice the volume label and
-set it into `LABEL=` variable.
+change `LABEL=` variable accordingly.
 
 Run script manually:
 ```bash
 /opt/etc/cron.daily/backup
 ```
+
+If scripts finishes without errors, you're good to go. It will be launched daily.
 
 Backups will be stored for 8 days (changeable at `DAYS=8`)
 
