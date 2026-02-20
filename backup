@@ -1,5 +1,6 @@
-7#!/opt/bin/sh
+#!/opt/bin/sh
 set -e  # Exit on error
+# use sed -i 's/\r//g' /opt/etc/cron.daily/backup to fix Windows CR/LF line ends
 
 PATH=/opt/bin:/opt/sbin:/sbin:/bin:/usr/sbin:/usr/bin
 
@@ -9,7 +10,8 @@ FOLDER=backup
 
 IsNFQWS1=0
 IsNFQWS2=1
-IsSKeen=1
+IsSKeen=0
+IsMihomo=1
 IsEnt=1
 IsConf=1
 IsFirm=1
@@ -109,6 +111,16 @@ if [ "$IsSKeen" = "1" ]; then
     EchoLog "SKeen backup complete"
 else
     EchoLog "Skipping SKeen backup"
+fi
+
+# Mihomo
+if [ "$IsMihomo" = "1" ]; then
+    EchoLog "Starting Mihomo backup"
+    mkdir -p "${DATEDIR}/opt/etc/mihomo" || { EchoLog "Error: mkdir failed for Mihomo."; exit 1; }
+    cp -rf /opt/etc/mihomo "${DATEDIR}/opt/etc" || { EchoLog "Error: mihomo config copy failed"; exit 1; }
+    EchoLog "Mihomo backup complete"
+else
+    EchoLog "Skipping Mihomo backup"
 fi
 
 # Entware
