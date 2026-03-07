@@ -1,8 +1,6 @@
 #!/opt/bin/sh
+# v2026-03-07
 set -e  # Exit on error
-# use sed -i 's/\r//g' /opt/etc/cron.daily/backup to fix Windows CR/LF line ends
-
-# first run have to be manual - script interactively checks for missing packages
 
 PATH=/opt/bin:/opt/sbin:/sbin:/bin:/usr/sbin:/usr/bin
 
@@ -12,8 +10,7 @@ FOLDER=backup
 
 IsNFQWS1=0
 IsNFQWS2=1
-IsSKeen=0
-IsMihomo=1
+IsSKeen=1
 IsEnt=1
 IsConf=1
 IsFirm=1
@@ -31,6 +28,7 @@ BACFIRMWARE=${LABEL}:/${FOLDER}/
 
 
 # Colors
+
 if [ -t 1 ]; then  # only to terminal (not in cron)
 	RESET='\033[0m'
 	CYAN='\033[36m'
@@ -61,7 +59,7 @@ EchoLog() {
         *"complete"|"Done"|"finished"*)  color="$GREEN" ;;
         *"Skipping"*)          	         color="$GRAY" ;;
         *"Warning"*)                     color="$YELLOW" ;;
-        *"Error"*)                       color="$BOLD_RED" ;;
+        *"Error"|"Failed"*)              color="$BOLD_RED" ;;
         *"changed"*)                     color="$BOLD_YELLOW" ;;
         *"is not changed"*)              color="$GRAY" ;;
     esac
@@ -70,27 +68,28 @@ EchoLog() {
     echo -e "${color}${TAG}: ${message}${RESET}"
 }
 
-# Check missing packages
+# Check packages
 recommended="tar pv"
 missing=""
 for pkg in $recommended; do
     opkg list-installed 2>/dev/null | grep -q "^${pkg} " || missing="${missing} $pkg"
 done
-[ -z "$missing" ] && return 0
-EchoLog "Warning: Missing packages: $missing"
-
-printf "${CYAN}Install missing packages? (Y/n): ${RESET}"
-read answer </dev/tty || answer="y"
-case "$answer" in
-[nN] | [nN][oO]) EchoLog "Warning: this backup tool may not function correctly" ;;
-*)
-    $pkg_cmd update >/dev/null 2>&1 || true
-    for pkg in $missing; do
-        EchoLog "Installing $pkg..."
-        opkg install $pkg && EchoLog "Installed $pkg" || EchoLog "Failed: $pkg"
-    done
-    ;;
-esac
+# [ -z "$missing" ] && return 0
+if [ -n "$missing" ]; then
+   EchoLog "Warning: Missing packages: $missing"
+   printf "${CYAN}Install missing packages? (Y/n): ${RESET}"
+   read answer </dev/tty || answer="y"
+   case "$answer" in
+   [nN] | [nN][oO]) EchoLog "Warning: this backup tool may not function correctly" ;;
+   *)
+       $pkg_cmd update >/dev/null 2>&1 || true
+       for pkg in $missing; do
+           EchoLog "Installing $pkg..."
+           opkg install $pkg && EchoLog "Installed $pkg" || EchoLog "Failed: $pkg"
+       done
+       ;;
+   esac
+fi
 
 # Check storage availability
 if [ ! -d "$BACKUPSTORE" ]; then
@@ -113,6 +112,7 @@ if [ "$IsNFQWS1" = "1" ]; then
     EchoLog "NFQWS1 backup complete"
 else
     EchoLog "Skipping NFQWS1 backup"
+fi
 
 # NFQWS2
 if [ "$IsNFQWS2" = "1" ]; then
@@ -133,16 +133,6 @@ if [ "$IsSKeen" = "1" ]; then
     EchoLog "SKeen backup complete"
 else
     EchoLog "Skipping SKeen backup"
-fi
-
-# Mihomo
-if [ "$IsMihomo" = "1" ]; then
-    EchoLog "Starting Mihomo backup"
-    mkdir -p "${DATEDIR}/opt/etc/mihomo" || { EchoLog "Error: mkdir failed for Mihomo."; exit 1; }
-    cp -rf /opt/etc/mihomo "${DATEDIR}/opt/etc" || { EchoLog "Error: mihomo config copy failed"; exit 1; }
-    EchoLog "Mihomo backup complete"
-else
-    EchoLog "Skipping Mihomo backup"
 fi
 
 # Entware
@@ -222,3 +212,4 @@ EchoLog "Removing obsolete archives"
 find "$BACKUPSTORE" -type d -mtime +${DAYS} -exec rm -rf {} \;
 
 EchoLog "Exiting backup"
+
