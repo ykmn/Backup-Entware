@@ -127,7 +127,7 @@ fi
 
 # XKeen
 if [ "$IsXKeen" = "1" ]; then
-    EchoLog "Starting SKeen backup"
+    EchoLog "Starting XKeen backup"
     mkdir -p "${DATEDIR}/opt/etc/xkeen" || { EchoLog "Error: mkdir failed for XKeen."; exit 1; }
     mkdir -p "${DATEDIR}/opt/etc/xkeen-ui" || { EchoLog "Error: mkdir failed for XKeen-UI."; exit 1; }
     cp -rf /opt/etc/xkeen "${DATEDIR}/opt/etc/xkeen" || { EchoLog "Error: XKeen copy failed"; exit 1; }
