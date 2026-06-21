@@ -27,6 +27,8 @@ Set 1 or 0 in the Configuration section variables to backup or skip:
 
 * isSKeen=1: backup [SKeen](https://github.com/jinndi/SKeen/) configuration from /opt/etc/skeen
 
+* isXKeen=1: backup [XKeen](https://github.com/jameszeroX/XKeen) configuration from /opt/etc/xkeen and complete [Xkeek-UI](https://github.com/umarcheh001/Xkeen-UI) folder from /opt/etc/xkeen-ui
+
 * isMihomo=1: backup [Mihomo](https://github.com/MetaCubeX/mihomo) configuration from /opt/etc/mihomo
 
 * IsEnt=1: backup Entware file system to Entware-YYYY-MM-DD.tgz file. You can use it to fully restore your Entware on a new USB Flash drive, just put this file to /install folder.
