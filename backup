@@ -1,5 +1,5 @@
 #!/opt/bin/sh
-# v2026-03-07
+# v2026-06-21
 set -e  # Exit on error
 
 PATH=/opt/bin:/opt/sbin:/sbin:/bin:/usr/sbin:/usr/bin
@@ -10,7 +10,8 @@ FOLDER=backup
 
 IsNFQWS1=0
 IsNFQWS2=1
-IsSKeen=1
+IsSKeen=0
+IsXKeen=1
 IsEnt=1
 IsConf=1
 IsFirm=1
@@ -122,6 +123,18 @@ if [ "$IsNFQWS2" = "1" ]; then
     EchoLog "NFQWS2 backup complete"
 else
     EchoLog "Skipping NFQWS2 backup"
+fi
+
+# XKeen
+if [ "$IsXKeen" = "1" ]; then
+    EchoLog "Starting SKeen backup"
+    mkdir -p "${DATEDIR}/opt/etc/xkeen" || { EchoLog "Error: mkdir failed for XKeen."; exit 1; }
+    mkdir -p "${DATEDIR}/opt/etc/xkeen-ui" || { EchoLog "Error: mkdir failed for XKeen-UI."; exit 1; }
+    cp -rf /opt/etc/xkeen "${DATEDIR}/opt/etc/xkeen" || { EchoLog "Error: XKeen copy failed"; exit 1; }
+    cp -rf /opt/etc/xkeen-ui "${DATEDIR}/opt/etc/xkeen-ui" || { EchoLog "Error: XKeen-UI config copy failed"; exit 1; }
+    EchoLog "XKeen backup complete"
+else
+    EchoLog "Skipping XKeen backup"
 fi
 
 # SKeen
