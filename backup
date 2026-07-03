@@ -7,9 +7,8 @@ PATH=/opt/bin:/opt/sbin:/sbin:/bin:/usr/sbin:/usr/bin
 
 ### Settings
 USB_LABEL="Kingston16G"
-BACKUP_DIR="/tmp/mnt/${USB_LABEL}/Backups"
+BACKUP_DIR="/tmp/mnt/${USB_LABEL}/backup"
 DAYS=8
-TAG=Backup
 
 # Select components
 IsNFQWS1=0
@@ -22,6 +21,7 @@ IsXRay=0
 IsConf=1
 IsFirm=1
 # ====================
+TAG=Backup
 
 
 
