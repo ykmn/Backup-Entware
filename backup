@@ -85,7 +85,7 @@ backup_app() {
 		shift 2
 		[ ! -e "$src" ] && { EchoLog "Warning: ${name}: ${src} not found, skipping"; continue; }
 		mkdir -p "${DATEDIR}${dst%/*}" || { EchoLog "Error: mkdir failed for ${name}."; exit 1; }
-		cp -rf "$src" "${DATEDIR}${dst}" || { EchoLog "Error: ${name} copy failed"; exit 1; }
+		cp -rfL "$src" "${DATEDIR}${dst}" || { EchoLog "Error: ${name} copy failed"; exit 1; }
 	done
 	EchoLog "${name} backup complete"
 }
