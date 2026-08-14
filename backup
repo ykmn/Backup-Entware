@@ -133,24 +133,24 @@ backup_app "XRay" "$IsXRay" \
 
 ARCHIVE="${ARCH}-installer-${DATE}.tar.gz"
 EchoLog "Starting Entware archive: ${ARCHIVE}"
-EXCLUDE="--exclude=opt/tmp --exclude=opt/var/run"
+EXCLUDE="--exclude=tmp --exclude=var/run"
 
 if [ -t 1 ] && command -v pv >/dev/null 2>&1; then
 	TOTAL_SIZE=$(du -sk /opt 2>/dev/null | awk '{print $1}')
 	if [ -n "$TOTAL_SIZE" ] && [ "$TOTAL_SIZE" -gt 0 ] 2>/dev/null; then
 		# shellcheck disable=SC2086
-		tar -cf - -C / $EXCLUDE opt/ \
+		tar -cf - -C /opt $EXCLUDE . \
 			| pv -s "${TOTAL_SIZE}k" -N "Archiving" | gzip \
 			> "${DATEDIR}${ARCHIVE}"
 	else
 		# shellcheck disable=SC2086
-		tar -cf - -C / $EXCLUDE opt/ \
+		tar -cf - -C /opt $EXCLUDE . \
 			| pv -N "Archiving" | gzip \
 			> "${DATEDIR}${ARCHIVE}"
 	fi
 else
 	# shellcheck disable=SC2086
-	tar -czf "${DATEDIR}${ARCHIVE}" -C / $EXCLUDE opt/
+	tar -czf "${DATEDIR}${ARCHIVE}" -C /opt $EXCLUDE .
 fi
 EchoLog "Entware archive complete"
 
