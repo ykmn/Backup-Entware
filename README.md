@@ -46,15 +46,9 @@ opkg install pv cron
 /opt/etc/init.d/S10cron status
 ```
 
-Clone this repo:
+Download the script, set executive permissions:
 ```bash
-cd ~
-git clone https://github.com/ykmn/Backup-Entware.git
-```
-
-Copy `backup` script to the cron daily folder, set execute permission:
-```bash
-cp ~/Backup-Entware/backup /opt/etc/cron.daily
+wget -O /opt/etc/cron.daily/backup https://github.com/ykmn/Backup-Entware/raw/refs/heads/main/backup
 chmod +x /opt/etc/cron.daily/backup
 ```
 
