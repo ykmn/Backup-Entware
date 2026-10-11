@@ -1,6 +1,7 @@
 #!/opt/bin/sh
-# v2026-07-01
-set -e
+# v2026-09-27
+set -eu
+umask 077
 # use sed -i 's/\r//g' /opt/etc/cron.daily/backup to fix Windows CR/LF line ends
 
 PATH=/opt/bin:/opt/sbin:/sbin:/bin:/usr/sbin:/usr/bin
@@ -23,12 +24,6 @@ IsFirm=1
 # ====================
 TAG=Backup
 
-
-
-
-# Exclude this strings for grep running-config
-EXCLCONFCMD='!\$\$\$\|clock date'
-
 if [ -t 1 ]; then
 	RESET='\033[0m'    CYAN='\033[36m'    GREEN='\033[32m'
 	YELLOW='\033[33m'  RED='\033[31m'     BOLD_RED='\033[1;31m'
@@ -41,38 +36,121 @@ EchoLog() {
 	local message="$1" color="$RESET"
 	case "$message" in
 		*"Starting"*)                      color="$CYAN" ;;
-		*"complete"|"Done"|"finished"*)    color="$GREEN" ;;
+		*"complete"*|*"Done"*|*"finished"*)    color="$GREEN" ;;
 		*"Skipping"*)                      color="$GRAY" ;;
 		*"Warning"*)                       color="$YELLOW" ;;
 		*"Error"*)                         color="$BOLD_RED" ;;
-		*"changed"*)                       color="$BOLD_YELLOW" ;;
 		*"is not changed"*)                color="$GRAY" ;;
+		*"changed"*)                       color="$BOLD_YELLOW" ;;
 	esac
-	logger -t "$TAG" "$message"
+	logger -t "$TAG" "$message" || :
 	printf '%b\n' "${color}${TAG}: ${message}${RESET}"
 }
 
-# Check architecture
-ARCH=$(opkg print-architecture 2>/dev/null | awk '/^arch/ && $2 !~ /^(all|noarch)$/ {print $2; exit}')
-if [ -z "$ARCH" ]; then
-	# fallback: read from binary
-	ARCH=$(readelf -h /opt/bin/opkg 2>/dev/null | awk '/Machine:/ {print $2}') || ARCH="unknown"
-fi
+# Validate paths used by the router CLI and cleanup.
+case "$USB_LABEL" in
+	''|*[!A-Za-z0-9_-]*) EchoLog "Error: USB_LABEL must contain only letters, digits, _ or -"; exit 1 ;;
+esac
+case "$DAYS" in
+	''|*[!0-9]*) EchoLog "Error: DAYS must be a non-negative integer"; exit 1 ;;
+esac
+MOUNT_DIR="/tmp/mnt/${USB_LABEL}"
+case "$BACKUP_DIR" in
+	"$MOUNT_DIR"/*) ;;
+	*) EchoLog "Error: BACKUP_DIR must be inside $MOUNT_DIR"; exit 1 ;;
+esac
+case "$BACKUP_DIR" in
+	*/../*|*/./*|*/..|*/.|*/) EchoLog "Error: BACKUP_DIR must be a normalized path without a trailing slash"; exit 1 ;;
+esac
 
+# Reject symlink components before creating anything under the destination.
+CHECK_PATH="$MOUNT_DIR"
+REMAINING=${BACKUP_DIR#"$MOUNT_DIR"/}
+while [ -n "$REMAINING" ]; do
+	COMPONENT=${REMAINING%%/*}
+	[ -n "$COMPONENT" ] || { EchoLog "Error: Empty BACKUP_DIR path component"; exit 1; }
+	CHECK_PATH="$CHECK_PATH/$COMPONENT"
+	[ ! -L "$CHECK_PATH" ] || { EchoLog "Error: Symlink in BACKUP_DIR: $CHECK_PATH"; exit 1; }
+	case "$REMAINING" in
+		*/*) REMAINING=${REMAINING#*/} ;;
+		*) REMAINING="" ;;
+	esac
+done
 
-# Check destination flash drive
-if [ ! -d "/tmp/mnt/${USB_LABEL}" ]; then
+# A leftover directory alone does not prove that the USB drive is mounted.
+if [ ! -d "$MOUNT_DIR" ]; then
 	EchoLog "Error: USB drive '${USB_LABEL}' not mounted!"
 	exit 1
 fi
 
-AVAIL=$(df -k "$BACKUP_DIR" 2>/dev/null | awk 'NR==2 {print $4}')
-TOTAL_OPT=$(du -sk /opt 2>/dev/null | awk '{print $1}')
-if [ -n "$AVAIL" ] && [ -n "$TOTAL_OPT" ] && [ "$AVAIL" -lt "$TOTAL_OPT" ]; then
-	EchoLog "Error: Only $((AVAIL / 1024)) MiB free, need ~$((TOTAL_OPT / 1024)) MiB"
+REAL_MOUNT_DIR=$(readlink -f "$MOUNT_DIR") || {
+	EchoLog "Error: cannot resolve mount path: $MOUNT_DIR"
+	exit 1
+}
+
+if ! awk -v target="$REAL_MOUNT_DIR" '
+	$2 == target { found = 1 }
+	END { exit !found }
+' /proc/mounts; then
+	EchoLog "Error: USB drive '${USB_LABEL}' not mounted!"
 	exit 1
 fi
 
+# mkdir is atomic and works without flock. A stale lock after a power loss
+# must be removed manually after confirming no backup process is running.
+LOCK_DIR=/tmp/entware-backup.lock
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+	EchoLog "Error: backup lock exists at $LOCK_DIR; another run may be active"
+	exit 1
+fi
+STAGING=""
+FIRMWARE_TMP=""
+cleanup_run() {
+	local status="$?"
+	trap - 0
+	if [ -n "$STAGING" ] && [ -d "$STAGING" ]; then
+		rm -rf "$STAGING" || :
+	fi
+	if [ -n "$FIRMWARE_TMP" ]; then
+		rm -f "$FIRMWARE_TMP" || :
+	fi
+	rmdir "$LOCK_DIR" || :
+	if [ "$status" -ne 0 ]; then
+		EchoLog "Error: Backup failed; previous completed backups were preserved"
+	fi
+	exit "$status"
+}
+trap cleanup_run 0
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+mkdir -p "$BACKUP_DIR"
+# Measure the existing mount and follow /opt if it is a symlink.
+DF_OUTPUT=$(df -Pk "$MOUNT_DIR")
+AVAIL=$(printf '%s\n' "$DF_OUTPUT" | awk 'NR==2 {print $4}')
+DU_OUTPUT=$(du -sk /opt/.)
+TOTAL_OPT=$(printf '%s\n' "$DU_OUTPUT" | awk 'NR==1 {print $1}')
+case "$AVAIL:$TOTAL_OPT" in
+	*[!0-9:]*|:*|*:) EchoLog "Error: Cannot determine available space or /opt size"; exit 1 ;;
+esac
+# Conservative estimate: archive + application copies + firmware/headroom.
+REQUIRED=$((TOTAL_OPT * 2 + 65536))
+if [ "$AVAIL" -lt "$REQUIRED" ]; then
+	EchoLog "Error: Only $((AVAIL / 1024)) MiB free, estimated need ~$((REQUIRED / 1024)) MiB"
+	exit 1
+fi
+
+ARCH=""
+if ARCH_OUTPUT=$(opkg print-architecture 2>/dev/null); then
+	ARCH=$(printf '%s\n' "$ARCH_OUTPUT" | awk '/^arch/ && $2 !~ /^(all|noarch)$/ {print $2; exit}')
+fi
+if [ -z "$ARCH" ] && ARCH_OUTPUT=$(readelf -h /opt/bin/opkg 2>/dev/null); then
+	ARCH=$(printf '%s\n' "$ARCH_OUTPUT" | awk '/Machine:/ {print $2; exit}')
+fi
+case "$ARCH" in
+	''|*[!A-Za-z0-9_.-]*) ARCH=unknown ;;
+esac
 
 ### Apps Backup function:
 backup_app() {
@@ -90,13 +168,16 @@ backup_app() {
 	EchoLog "${name} backup complete"
 }
 
-
-
 # Start!
 
 DATE=$(date +%Y-%m-%d)
-DATEDIR="${BACKUP_DIR}/${DATE}/"
-mkdir -p "$DATEDIR" || { EchoLog "Error: Cannot create $DATEDIR."; exit 1; }
+# Keep the traditional date name for the first run; preserve repeat runs too.
+RUN_NAME="$DATE"
+if [ -e "$BACKUP_DIR/$RUN_NAME" ]; then
+	RUN_NAME="${DATE}-$(date +%H%M%S)-$$"
+fi
+STAGING=$(mktemp -d "$BACKUP_DIR/.incomplete-XXXXXX")
+DATEDIR="$STAGING/"
 
 START_TIME=$(date +%s)
 EchoLog "Starting backup | arch: ${ARCH} | target: ${BACKUP_DIR}"
@@ -127,63 +208,49 @@ backup_app "XKeenUI" "$IsXKeenUI" \
 backup_app "XRay" "$IsXRay" \
 	"/opt/etc/xray/configs" "etc/xray/configs"
 
-
-
 # Complete backup of Entware image
 
 ARCHIVE="${ARCH}-installer-${DATE}.tar.gz"
 EchoLog "Starting Entware archive: ${ARCHIVE}"
-EXCLUDE="--exclude=tmp --exclude=var/run"
-
+# The staging directory keeps incomplete archives away from completed backups.
 if [ -t 1 ] && command -v pv >/dev/null 2>&1; then
-	TOTAL_SIZE=$(du -sk /opt 2>/dev/null | awk '{print $1}')
-	if [ -n "$TOTAL_SIZE" ] && [ "$TOTAL_SIZE" -gt 0 ] 2>/dev/null; then
-		# shellcheck disable=SC2086
-		tar -cf - -C /opt $EXCLUDE . \
-			| pv -s "${TOTAL_SIZE}k" -N "Archiving" | gzip \
-			> "${DATEDIR}${ARCHIVE}"
-	else
-		# shellcheck disable=SC2086
-		tar -cf - -C /opt $EXCLUDE . \
-			| pv -N "Archiving" | gzip \
-			> "${DATEDIR}${ARCHIVE}"
-	fi
+	tar -cf - -C /opt --exclude=./tmp --exclude=./var/run . \
+		| pv -s "${TOTAL_OPT}k" -N "Archiving" \
+		| gzip > "${DATEDIR}${ARCHIVE}" \
+		|| { EchoLog "Error: Entware archive failed"; exit 1; }
 else
-	# shellcheck disable=SC2086
-	tar -czf "${DATEDIR}${ARCHIVE}" -C /opt $EXCLUDE .
+	TAR_STATUS=0
+	tar -czf "${DATEDIR}${ARCHIVE}" -C /opt --exclude=./tmp --exclude=./var/run . \
+		|| TAR_STATUS="$?"
+	case "$TAR_STATUS" in
+		0) ;;
+		1) EchoLog "Warning: Entware archive completed with tar warnings; some files changed during read" ;;
+		*) EchoLog "Error: Entware archive failed"; exit 1 ;;
+	esac
 fi
+gzip -t "${DATEDIR}${ARCHIVE}" \
+	|| { EchoLog "Error: Entware archive integrity check failed"; exit 1; }
 EchoLog "Entware archive complete"
-
 
 # Backup running-config ---
 
 if [ "$IsConf" = "1" ]; then
 	EchoLog "Starting running-config backup"
 	CONFIG_NEW="${DATEDIR}config-${DATE}"
-	CONFIG_CUR="${BACKUP_DIR}/config-cur"
 
 	if ! command -v ndmc >/dev/null 2>&1; then
-		EchoLog "Warning: ndmc not found, skipping running-config backup"
+		EchoLog "Error: ndmc not found; running-config backup was requested"
+		exit 1
 	else
 		ndmc -c "show running-config" > "$CONFIG_NEW" || { EchoLog "Error: ndmc failed"; exit 1; }
 
-		if [ -f "$CONFIG_CUR" ]; then
-		OLDCONF=$(grep -v "${EXCLCONFCMD}" "$CONFIG_CUR") || true
-		CURCONF=$(grep -v "${EXCLCONFCMD}" "$CONFIG_NEW") || true
-		if [ "$OLDCONF" = "$CURCONF" ]; then
-			EchoLog "Running config is not changed"
-			rm -f "$CONFIG_NEW"
-		else
-			EchoLog "Running config changed. Saving."
-			cp -rf "$CONFIG_NEW" "$CONFIG_CUR"
-			gzip -f "$CONFIG_NEW"
-		fi
-	else
-		EchoLog "First run — saving running-config"
-		cp -rf "$CONFIG_NEW" "$CONFIG_CUR"
-		gzip -f "$CONFIG_NEW"
+		[ -s "$CONFIG_NEW" ] || { EchoLog "Error: running-config is empty"; exit 1; }
+		cp "$CONFIG_NEW" "${DATEDIR}.config-cur"
+		gzip "$CONFIG_NEW"
+		EchoLog "Running config backup complete"
 	fi
-	fi
+else
+	EchoLog "Skipping running-config backup"
 fi
 
 # Firmware
@@ -191,39 +258,66 @@ if [ "$IsFirm" = "1" ]; then
 	EchoLog "Starting firmware backup"
 
 	if ! command -v ndmc >/dev/null 2>&1; then
-		EchoLog "Warning: ndmc not found, skipping firmware backup"
+		EchoLog "Error: ndmc not found; firmware backup was requested"
+		exit 1
 	else
 		FIRM_NEW="${DATEDIR}firmware-${DATE}"
-		FIRM_CUR="${BACKUP_DIR}/firmware-cur"
 		USB_RELPATH="${BACKUP_DIR#/tmp/mnt/${USB_LABEL}/}"
+		FIRMWARE_TMP="$BACKUP_DIR/.firmware-${DATE}-$$"
+		[ ! -e "$FIRMWARE_TMP" ] || { EchoLog "Error: firmware temp file already exists: $FIRMWARE_TMP"; exit 1; }
 
-		ndmc -c "copy flash:/firmware ${USB_LABEL}:${USB_RELPATH}/${DATE}/firmware-${DATE}" \
-			|| { EchoLog "Error: ndmc copy failed for firmware."; exit 1; }
-
-		if [ -f "$FIRM_NEW" ]; then
-			if [ -f "$FIRM_CUR" ] && cmp -s "$FIRM_CUR" "$FIRM_NEW"; then
-				EchoLog "Firmware is not changed. No new archive needed."
-				rm -f "$FIRM_NEW"
-			else
-				EchoLog "Firmware is changed. Saving."
-				cp -f "$FIRM_NEW" "$FIRM_CUR"
-			fi
-		else
-			EchoLog "Warning: firmware file not found at ${FIRM_NEW}"
+		if ! ndmc -c "copy flash:/firmware ${USB_LABEL}:${USB_RELPATH}/${FIRMWARE_TMP##*/}"; then
+			rm -f "$FIRMWARE_TMP"
+			EchoLog "Error: ndmc copy failed for firmware."
+			exit 1
 		fi
+		if [ ! -s "$FIRMWARE_TMP" ]; then
+			rm -f "$FIRMWARE_TMP"
+			EchoLog "Error: firmware temp file missing or empty at ${FIRMWARE_TMP}"
+			exit 1
+		fi
+		mv "$FIRMWARE_TMP" "$FIRM_NEW" || { rm -f "$FIRMWARE_TMP"; EchoLog "Error: cannot move firmware into staging."; exit 1; }
+
+		[ -s "$FIRM_NEW" ] || { EchoLog "Error: firmware file missing or empty at ${FIRM_NEW}"; exit 1; }
+		EchoLog "Firmware backup complete"
 	fi
 else
 	EchoLog "Skipping firmware backup"
 fi
 
-# Cleanup
+# Publish only after all requested backups have succeeded.
+FINAL_DIR="$BACKUP_DIR/$RUN_NAME"
+[ ! -e "$FINAL_DIR" ] || { EchoLog "Error: destination already exists: $FINAL_DIR"; exit 1; }
+mv "$STAGING" "$FINAL_DIR"
+STAGING=""
+DATEDIR="$FINAL_DIR/"
 
-cd "$BACKUP_DIR"
+# Update compatibility copies atomically, after publishing the daily snapshot.
+if [ -f "${DATEDIR}.config-cur" ]; then
+	mv "${DATEDIR}.config-cur" "$BACKUP_DIR/config-cur"
+fi
+if [ -f "${DATEDIR}firmware-${DATE}" ]; then
+	cp "${DATEDIR}firmware-${DATE}" "$BACKUP_DIR/.firmware-cur.part"
+	mv "$BACKUP_DIR/.firmware-cur.part" "$BACKUP_DIR/firmware-cur"
+fi
+
+# Only completed snapshot directories are eligible; never the backup root.
 EchoLog "Removing backups older than ${DAYS} days"
-find "$BACKUP_DIR" -maxdepth 1 -type d -mtime +${DAYS} -exec rm -rf {} \; 2>/dev/null || true
+for SNAPSHOT in "$BACKUP_DIR"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*; do
+	[ -d "$SNAPSHOT" ] && [ ! -L "$SNAPSHOT" ] || continue
+	[ "$SNAPSHOT" != "$FINAL_DIR" ] || continue
+	SNAPSHOT_NAME=${SNAPSHOT##*/}
+	case "$SNAPSHOT_NAME" in
+		[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+		[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]-*)
+			SNAPSHOT_PID=${SNAPSHOT_NAME#????-??-??-??????-}
+			case "$SNAPSHOT_PID" in ''|*[!0-9]*) continue ;; esac ;;
+		*) continue ;;
+	esac
+	find "$SNAPSHOT" -maxdepth 0 -type d -mtime "+$DAYS" -exec rm -rf {} \;
+done
 
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
-SIZE=$(du -sh "${DATEDIR}" 2>/dev/null | awk '{print $1}')
-
+SIZE=$(du -sh "$DATEDIR" | awk '{print $1}')
 EchoLog "Backup finished | size: ${SIZE} | duration: $((DURATION / 60))m $((DURATION % 60))s"
